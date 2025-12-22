@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2020 Martin Stewart
  * Copyright (c) 2025 Yiming Xiang
+ * Copyright (c) 2020 Martin Stewart
  *
  * This file is derived from the elm-audio project:
  * https://github.com/MartinSStewart/elm-audio
@@ -9,61 +9,66 @@
  * See NOTICES for details.
  */
 
+/** @type {AudioBuffer[]} */
+
+let audioBuffers = [];
+let context = null;
+
+/** @type {{ [key: number]: { bufferId: any; nodes: {sourceNode: AudioBufferSourceNode; gainNode: GainNode; volumeAtGainNodes: GainNode[] } } }} */
+let audioPlaying = {};
+
+
+/**
+ * @param {{ audioUrl: string; requestId: number }} audio
+ */
+async function loadAudio(audio) {
+    let responseBuffer;
+    try {
+        const response = await fetch(audio.audioUrl);
+        responseBuffer = await response.arrayBuffer();
+    } catch {
+        app.updateaudio({
+            type: 0,
+            requestId: audio.requestId,
+            error: "NetworkError",
+        });
+        return;
+    }
+
+    try {
+        const buffer = await context.decodeAudioData(responseBuffer);
+
+        let bufferId = audioBuffers.length;
+        audioBuffers.push(buffer);
+
+        app.updateaudio({
+            type: 1,
+            requestId: audio.requestId,
+            bufferId: bufferId,
+            durationInSeconds: buffer.length / buffer.sampleRate,
+        });
+    } catch (error) {
+        app.updateaudio({
+            type: 0,
+            requestId: audio.requestId,
+            error: error.message,
+        });
+    }
+}
+
+
 /**
  * @param {{ ports: { audioPortFromJS: { send: (arg: { type: number; samplesPerSecond?: number; requestId?: number; error?: any; bufferId?: number; durationInSeconds?: number; }) => void; }; audioPortToJS: { subscribe: (arg: (message: any) => void) => void; }; }; }} app
  */
-function startAudio(app) {
+function init(app) {
     window.AudioContext =
         window.AudioContext || window.webkitAudioContext || false;
     if (window.AudioContext) {
-        /** @type {AudioBuffer[]} */
-        let audioBuffers = [];
-        let context = new AudioContext();
-        /** @type {{ [key: number]: { bufferId: any; nodes: {sourceNode: AudioBufferSourceNode; gainNode: GainNode; volumeAtGainNodes: GainNode[] } } }} */
-        let audioPlaying = {};
-
-        app.ports.audioPortFromJS.send({
+        context = new AudioContext()
+        app.updateaudio({
             type: 2,
             samplesPerSecond: context.sampleRate,
         });
-
-        /**
-         * @param {{ audioUrl: string; requestId: number }} audio
-         */
-        async function loadAudio(audio) {
-            let responseBuffer;
-            try {
-                const response = await fetch(audio.audioUrl);
-                responseBuffer = await response.arrayBuffer();
-            } catch {
-                app.ports.audioPortFromJS.send({
-                    type: 0,
-                    requestId: audio.requestId,
-                    error: "NetworkError",
-                });
-                return;
-            }
-
-            try {
-                const buffer = await context.decodeAudioData(responseBuffer);
-
-                let bufferId = audioBuffers.length;
-                audioBuffers.push(buffer);
-
-                app.ports.audioPortFromJS.send({
-                    type: 1,
-                    requestId: audio.requestId,
-                    bufferId: bufferId,
-                    durationInSeconds: buffer.length / buffer.sampleRate,
-                });
-            } catch (error) {
-                app.ports.audioPortFromJS.send({
-                    type: 0,
-                    requestId: audio.requestId,
-                    error: error.message,
-                });
-            }
-        }
 
         /**
          * @param {number} posix
@@ -251,95 +256,100 @@ function startAudio(app) {
                 volumeAtGainNodes: timelineGainNodes,
             };
         }
-
-        app.ports.audioPortToJS.subscribe(async (message) => {
-            let currentTime = new Date().getTime();
-            for (let i = 0; i < message.audio.length; i++) {
-                let audio = message.audio[i];
-                switch (audio.action) {
-                    case "stopSound": {
-                        let value = audioPlaying[audio.nodeGroupId];
-                        delete audioPlaying[audio.nodeGroupId];
-                        value.nodes.sourceNode.stop();
-                        value.nodes.sourceNode.disconnect();
-                        value.nodes.gainNode.disconnect();
-                        value.nodes.volumeAtGainNodes.map((node) =>
-                            node.disconnect()
-                        );
-                        break;
-                    }
-                    case "setVolume": {
-                        let value = audioPlaying[audio.nodeGroupId];
-                        value.nodes.gainNode.gain.setValueAtTime(
-                            audio.volume,
-                            0
-                        );
-                        break;
-                    }
-                    case "setVolumeAt": {
-                        let value = audioPlaying[audio.nodeGroupId];
-                        value.nodes.volumeAtGainNodes.map((node) =>
-                            node.disconnect()
-                        );
-                        value.nodes.gainNode.disconnect();
-
-                        let newGainNodes = createVolumeTimelineGainNodes(
-                            audio.volumeAt,
-                            currentTime
-                        );
-
-                        connectNodes([
-                            value.nodes.gainNode,
-                            ...newGainNodes,
-                            context.destination,
-                        ]);
-
-                        value.nodes.volumeAtGainNodes = newGainNodes;
-                        break;
-                    }
-                    case "setLoopConfig": {
-                        let value = audioPlaying[audio.nodeGroupId];
-
-                        /* TODO: Resizing the buffer if the loopEnd value is past the end of the buffer.
-                        This might not be possible to do so the alternative is to create a new audio
-                        node (this will probably cause a popping sound and audio that is slightly out of sync).
-                        */
-
-                        setLoop(value.nodes.sourceNode, audio.loop);
-                        break;
-                    }
-                    case "setPlaybackRate": {
-                        let value = audioPlaying[audio.nodeGroupId];
-                        value.nodes.sourceNode.playbackRate.setValueAtTime(
-                            audio.playbackRate,
-                            0
-                        );
-                        break;
-                    }
-                    case "startSound": {
-                        let nodes = playSound(
-                            audioBuffers[audio.bufferId],
-                            audio.volume,
-                            audio.volumeTimelines,
-                            audio.startTime,
-                            audio.startAt,
-                            currentTime,
-                            audio.loop,
-                            audio.playbackRate
-                        );
-                        audioPlaying[audio.nodeGroupId] = {
-                            bufferId: audio.bufferId,
-                            nodes: nodes,
-                        };
-                        break;
-                    }
-                }
-            }
-
-            const loads = message.audioCmds.map(loadAudio);
-            await Promise.all(loads);
-        });
     } else {
-        console.log("Web audio is not supported in your browser.");
+        console.error("Web audio is not supported in your browser.");
     }
+}
+
+async function execCmd(message) {
+    let currentTime = new Date().getTime();
+    for (let i = 0; i < message.audio.length; i++) {
+        let audio = message.audio[i];
+        switch (audio.action) {
+            case "stopSound": {
+                let value = audioPlaying[audio.nodeGroupId];
+                delete audioPlaying[audio.nodeGroupId];
+                value.nodes.sourceNode.stop();
+                value.nodes.sourceNode.disconnect();
+                value.nodes.gainNode.disconnect();
+                value.nodes.volumeAtGainNodes.map((node) =>
+                    node.disconnect()
+                );
+                break;
+            }
+            case "setVolume": {
+                let value = audioPlaying[audio.nodeGroupId];
+                value.nodes.gainNode.gain.setValueAtTime(
+                    audio.volume,
+                    0
+                );
+                break;
+            }
+            case "setVolumeAt": {
+                let value = audioPlaying[audio.nodeGroupId];
+                value.nodes.volumeAtGainNodes.map((node) =>
+                    node.disconnect()
+                );
+                value.nodes.gainNode.disconnect();
+
+                let newGainNodes = createVolumeTimelineGainNodes(
+                    audio.volumeAt,
+                    currentTime
+                );
+
+                connectNodes([
+                    value.nodes.gainNode,
+                    ...newGainNodes,
+                    context.destination,
+                ]);
+
+                value.nodes.volumeAtGainNodes = newGainNodes;
+                break;
+            }
+            case "setLoopConfig": {
+                let value = audioPlaying[audio.nodeGroupId];
+
+                /* TODO: Resizing the buffer if the loopEnd value is past the end of the buffer.
+                This might not be possible to do so the alternative is to create a new audio
+                node (this will probably cause a popping sound and audio that is slightly out of sync).
+                */
+
+                setLoop(value.nodes.sourceNode, audio.loop);
+                break;
+            }
+            case "setPlaybackRate": {
+                let value = audioPlaying[audio.nodeGroupId];
+                value.nodes.sourceNode.playbackRate.setValueAtTime(
+                    audio.playbackRate,
+                    0
+                );
+                break;
+            }
+            case "startSound": {
+                let nodes = playSound(
+                    audioBuffers[audio.bufferId],
+                    audio.volume,
+                    audio.volumeTimelines,
+                    audio.startTime,
+                    audio.startAt,
+                    currentTime,
+                    audio.loop,
+                    audio.playbackRate
+                );
+                audioPlaying[audio.nodeGroupId] = {
+                    bufferId: audio.bufferId,
+                    nodes: nodes,
+                };
+                break;
+            }
+        }
+    }
+
+    const loads = message.audioCmds.map(loadAudio);
+    await Promise.all(loads);
+}
+
+globalThis.MlDeclAudio = {
+    init,
+    execCmd
 }

@@ -1,2 +1,11 @@
 (test
- (name test_ml_declaudio))
+ (name test_ml_declaudio)
+ (libraries js_of_ocaml ml_declaudio)
+ (modes js)
+ (preprocess
+  (pps js_of_ocaml-ppx))
+ (flags
+  (:standard -warn-error -A))
+ (js_of_ocaml
+  (flags
+   (:standard --opt=3))))

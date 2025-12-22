@@ -1,0 +1,12 @@
+{
+  "name": "ml-declaudio",
+  "version": "1.0.0",
+  "description": "",
+  "keywords": [],
+  "author": "",
+  "license": "GPL-3.0-only",
+  "packageManager": "pnpm@10.26.1",
+  "devDependencies": {
+    "browserify": "^17.0.1"
+  }
+}
