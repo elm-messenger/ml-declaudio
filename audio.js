@@ -21,15 +21,15 @@ let audioPlaying = {};
 /**
  * @param {{ audioUrl: string; requestId: number }} audio
  */
-async function loadAudio(audio) {
+async function loadAudio(audioUrl, requestId) {
     let responseBuffer;
     try {
-        const response = await fetch(audio.audioUrl);
+        const response = await fetch(audioUrl);
         responseBuffer = await response.arrayBuffer();
     } catch {
         app.updateaudio({
             type: 0,
-            requestId: audio.requestId,
+            requestId: requestId,
             error: "NetworkError",
         });
         return;
@@ -43,14 +43,14 @@ async function loadAudio(audio) {
 
         app.updateaudio({
             type: 1,
-            requestId: audio.requestId,
+            requestId: requestId,
             bufferId: bufferId,
             durationInSeconds: buffer.length / buffer.sampleRate,
         });
     } catch (error) {
         app.updateaudio({
             type: 0,
-            requestId: audio.requestId,
+            requestId: requestId,
             error: error.message,
         });
     }
@@ -82,10 +82,10 @@ function init(app) {
          * @param {AudioBufferSourceNode} sourceNode
          * @param {{ loopStart: number; loopEnd: number; } | null} loop
          */
-        function setLoop(sourceNode, loop) {
-            if (loop) {
-                sourceNode.loopStart = loop.loopStart / 1000;
-                sourceNode.loopEnd = loop.loopEnd / 1000;
+        function setLoop(sourceNode, loopStart, loopEnd) {
+            if (loopStart != null && loopEnd != null) {
+                sourceNode.loopStart = loopStart / 1000;
+                sourceNode.loopEnd = loopEnd / 1000;
                 sourceNode.loop = true;
             } else {
                 sourceNode.loop = false;
@@ -189,16 +189,17 @@ function init(app) {
             startTime,
             startAt,
             currentTime,
-            loop,
+            loopStart,
+            loopEnd,
             playbackRate
         ) {
             let source = context.createBufferSource();
 
-            if (loop) {
+            if (loopStart != null && loopEnd != null) {
                 // Add an extra 10 seconds so there's some room if the loopEnd gets moved back later
                 let durationInSeconds =
                     10 +
-                    loop.loopEnd / 1000 -
+                    loopEnd / 1000 -
                     buffer.length / buffer.sampleRate;
                 if (durationInSeconds > 0) {
                     let sampleCount =
@@ -222,7 +223,7 @@ function init(app) {
             }
 
             source.playbackRate.value = playbackRate;
-            setLoop(source, loop);
+            setLoop(source, loopStart, loopEnd);
 
             let timelineGainNodes = createVolumeTimelineGainNodes(
                 volumeTimelines,
@@ -314,7 +315,7 @@ async function execCmd(message) {
                 node (this will probably cause a popping sound and audio that is slightly out of sync).
                 */
 
-                setLoop(value.nodes.sourceNode, audio.loop);
+                setLoop(value.nodes.sourceNode, audio.loopStart, audio.loopEnd);
                 break;
             }
             case "setPlaybackRate": {
@@ -333,7 +334,8 @@ async function execCmd(message) {
                     audio.startTime,
                     audio.startAt,
                     currentTime,
-                    audio.loop,
+                    audio.loopStart,
+                    audio.loopEnd,
                     audio.playbackRate
                 );
                 audioPlaying[audio.nodeGroupId] = {
@@ -345,7 +347,10 @@ async function execCmd(message) {
         }
     }
 
-    const loads = message.audioCmds.map(loadAudio);
+    // Load all audio commands
+    const loads = message.audio.map((audio) =>
+        loadAudio(audio.audioUrl, audio.requestId)
+    );
     await Promise.all(loads);
 }
 
