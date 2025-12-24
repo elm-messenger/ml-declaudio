@@ -1,6 +1,95 @@
 open Js_of_ocaml
 
-type volume_timelines = (float * float) list list
+(* Core types from Audio.elm *)
+
+(** Buffer identifier wrapper *)
+type buffer_id = BufferId of int32
+
+(** Audio source data *)
+type source = File of { buffer_id : buffer_id }
+
+(** Loop configuration *)
+type loop_config = { loop_start : float; loop_end : float }
+
+(** Audio playback configuration *)
+type play_audio_config = {
+  loop : loop_config option;
+  playback_rate : float;
+  start_at : float;  (* Duration in seconds *)
+}
+
+(** Audio effects *)
+type effect_type =
+  | ScaleVolume of { scale_by : float }
+  | ScaleVolumeAt of { volume_at : (float * float) list }  (* (time, volume) list *)
+  | Offset of float  (* Duration offset in seconds *)
+
+(** Main audio type *)
+type audio =
+  | Group of audio list
+  | BasicAudio of {
+      source : source;
+      start_time : int32;  (* Unix timestamp in milliseconds *)
+      settings : play_audio_config;
+    }
+  | Effect of {
+      effect_type : effect_type;
+      audio : audio;
+    }
+
+(** Volume timeline type (non-empty list of (time, volume) points) *)
+type volume_timeline = (float * float) list
+
+(** Volume timelines (list of volume timelines) *)
+type volume_timelines = volume_timeline list
+
+(** Audio loading errors *)
+type load_error =
+  | FailedToDecode
+  | NetworkError
+  | UnknownError
+
+(* Helper functions *)
+
+(** Extract raw buffer ID from buffer_id wrapper *)
+let raw_buffer_id (BufferId id) = id
+
+(** Default audio playback configuration *)
+let audio_default_config : play_audio_config = {
+  loop = None;
+  playback_rate = 1.0;
+  start_at = 0.0;
+}
+
+(** Create audio from source with default configuration *)
+let audio (source : source) (start_time : int32) : audio =
+  BasicAudio { source; start_time; settings = audio_default_config }
+
+(** Create audio from source with custom configuration *)
+let audio_with_config (settings : play_audio_config) (source : source) (start_time : int32) : audio =
+  BasicAudio { source; start_time; settings }
+
+(** Scale volume of audio *)
+let scale_volume (scale_by : float) (audio : audio) : audio =
+  let scale_by = max 0.0 scale_by in
+  Effect { effect_type = ScaleVolume { scale_by }; audio }
+
+(** Scale volume at specific time points *)
+let scale_volume_at (volume_at : (float * float) list) (audio : audio) : audio =
+  let volume_at = List.map (fun (t, v) -> (t, max 0.0 v)) volume_at in
+  Effect { effect_type = ScaleVolumeAt { volume_at }; audio }
+
+(** Offset audio by duration *)
+let offset_by (offset : float) (audio : audio) : audio =
+  Effect { effect_type = Offset offset; audio }
+
+(** Combine multiple audio items into a group *)
+let group (audios : audio list) : audio =
+  Group audios
+
+(** Create silence (empty audio group) *)
+let silence : audio =
+  group []
 
 let gen_volume_timelines : volume_timelines -> Js.Unsafe.any =
  fun vts ->
@@ -42,8 +131,6 @@ let set_volume_at (node_id : int32) (volumeat : volume_timelines) =
       ("nodeGroupId", Js.Unsafe.inject (Js.int32 node_id));
       ("volumeAt", gen_volume_timelines volumeat);
     |]
-
-type loop_config = { loop_start : float; loop_end : float }
 
 let get_loop_start (cfg : loop_config option) : Js.Unsafe.any =
   match cfg with
@@ -95,3 +182,7 @@ let load_audio (audio_url : string) (req_id : int32) =
       ("audioUrl", Js.Unsafe.inject (Js.string audio_url));
       ("requestId", Js.Unsafe.inject (Js.int32 req_id));
     |]
+
+let execCmd x =
+  let mlda = Js.Unsafe.global##.MlDeclAudio in
+  mlda##execCmd x
